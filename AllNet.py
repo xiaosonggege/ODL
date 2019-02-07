@@ -9,13 +9,22 @@
 @time: 2019/2/2 23:08
 @desc:
 '''
-
 import tensorflow as tf
 import numpy as np
 
 class NeuralNetwork:
 
-    __slots__ = ('__x', '__y', '__loss', '__optimizer')
+    @staticmethod
+    def flat(tensor):
+        '''
+        将高维张量维度降至二维
+        :param tensor: type= Variable, 待处理张量
+        :return: 维度坍塌后的低维张量
+        '''
+        # 张量维度
+        dimension = tensor.get_shape().as_list()  # type= list
+        all_dim = np.multiply.reduce(np.array(dimension))
+        return tf.reshape(tensor, shape=(all_dim,))  # type= Variable
 
     def __init__(self, x, y, loss, optimizer):
         '''
@@ -25,8 +34,8 @@ class NeuralNetwork:
         :param loss: type= Function, 损失函数对象
         :param optimizer: type= Function, 优化函数对象
         '''
-        self.__x = x
-        self.__y = y
+        self.x = x
+        self.y = y
         self.__loss = loss
         self.__optimizer = optimizer
 
@@ -44,7 +53,6 @@ class NeuralNetwork:
         return optimizer
 
 class FNN(NeuralNetwork):
-    __slots__ = ('__x', '__y', '__w')
 
     @staticmethod
     def fc_layer(para, w, b, keep_prob):
@@ -63,8 +71,8 @@ class FNN(NeuralNetwork):
     def __init__(self, x, y, loss, optimizer, w):
         '''
         全连接网络构造函数
-        :param x: 单一数据特征
-        :param y: 单一数据标签
+        :param x: Tensor, 单一数据特征
+        :param y: Tensor, 单一数据标签
         :param loss: type= Function, 损失函数对象
         :param optimizer: type= Function, 优化函数对象
         :param w: types = ((W, bia),..., ), W, b为参数矩阵和偏置矩阵
@@ -82,7 +90,7 @@ class FNN(NeuralNetwork):
         for parameters in self.__w:
             w, b = parameters
             if not initial:
-                fc_ops = FNN.fc_layer(para= self.__x, w= w, b= b, keep_prob= keep_prob)
+                fc_ops = FNN.fc_layer(para= self.x, w= w, b= b, keep_prob= keep_prob)
                 initial = 0
             else:
                 fc_ops = FNN.fc_layer(para= fc_ops, w= w, b= b, keep_prob= keep_prob)
@@ -91,35 +99,22 @@ class FNN(NeuralNetwork):
 
 
 class CNN(NeuralNetwork):
-    __slots__ = ('__x', '__y', '__w_conv', '__w_pool', '__stride_conv', '__stride_pool')
 
     @staticmethod
     def reshape(f_vector, new_shape):
         '''
-        对输入ndarray类型张量进行维度变换
-        :param f_vector: type= array(ndarray), 待处理特征向量
+        对输入Tensor类型张量进行维度变换
+        :param f_vector: type= Tensor, 待处理特征向量
         :param new_shape: 变换后维度
         :return: 处理后的特征向量
         '''
-        return f_vector.reshape(new_shape)
-
-    @staticmethod
-    def flat(tensor):
-        '''
-        将高维张量维度降至二维
-        :param tensor: type= Variable, 待处理张量
-        :return: 维度坍塌后的低维张量
-        '''
-        #张量维度
-        dimension = tensor.get_shape().as_list() #type= list
-        all_dim = np.multiply.reduce(np.array(dimension))
-        return tf.reshape(tensor, shape= (all_dim, )) #type= Variable
+        return tf.reshape(f_vector, new_shape)
 
     def __init__(self, x, y, w_conv, w_pool, stride_conv, stride_pool, loss, optimizer):
         '''
         卷积神经网络构造函数
-        :param x: 单一数据特征
-        :param y: 单一数据标签
+        :param x: Tensor, 单一数据特征
+        :param y: Tensor, 单一数据标签
         :param w_conv: type= list, 单个卷积核维度(4维)
         :param w_pool: type= list, 单个池化核维度(4维)
         :param stride_conv: 卷积核移动步伐
@@ -139,7 +134,7 @@ class CNN(NeuralNetwork):
         :param op_outside: setdefult:x, 输入待进行卷积操作节点
         :return: ops, 单层卷积操作后节点
         '''
-        input = op_outside if op_outside != 'x' else self.__x
+        input = op_outside if op_outside != 'x' else self.x
         filter_initial = tf.Variable(tf.truncated_normal(shape= self.__w_conv, mean= 0, stddev= 1)) #mean、stddev可更改
         return tf.nn.conv2d(input= input, filter= filter_initial, strides= [1, self.__stride_conv, self.__stride_conv, 1], padding= 'SAME')
 
@@ -153,8 +148,62 @@ class CNN(NeuralNetwork):
         return pool_fun(value= input, ksize= [1, self.__stride_pool, self.__stride_pool, 1],
                         strides= [1, self.__stride_pool, self.__stride_pool, 1], padding= 'SAME')
 
-class LSTM(NeuralNetwork):
-    __slots__ = ('__x', '__y', '__')
+class RNN(NeuralNetwork):
+
+    @staticmethod
+    def get_a_cell(num_units, style):
+        '''
+        制作一个LSTM/GRU节点
+        :param num_units: 隐藏层向量维度
+        :param style: 网络名称
+        :return: ops, 循环网络节点
+        '''
+
+        return tf.nn.rnn_cell.LSTMCell(num_units= num_units) if style == 'LSTM' else tf.nn.rnn_cell.GRUCell(num_units= num_units)
+
+    @staticmethod
+    def reshape(x, max_time):
+        '''
+        对输入Tensor特征进行维度转换
+        :param x: type: Tensor, 单一特征数据
+        :param max_time: 最大循环次数
+        :return: 维度转换后的特征
+        '''
+        den_3 = int(x.get_shape().as_list()[-1] / max_time)
+        para_shape = (x.get_shape().as_list()[0], max_time, den_3)
+        return tf.reshape(x, para_shape)
+
+    def __init__(self, x, y, loss, optimizer, max_time, num_units):
+        '''
+        循环网络构造函数
+        :param x: Tensor, 单一特征数据
+        :param y: Tensor, 单一数据标签
+        :param loss: 损失函数
+        :param optimizer: 优化函数
+        :param max_time: 最大循环次数
+        :param num_units: 隐藏层向量维度
+        '''
+        super(RNN, self).__init__(x, y, loss, optimizer)
+        self.__max_time = max_time
+        self.__num_units = num_units
+
+    def dynamic_rnn(self, style, output_keep_prob):
+        '''
+        按时间步展开计算循环网络
+        :param style: LSTM/GRU
+        :param output_keep_prob: rnn节点中dropout概率
+        :return: 各个时间步输出值和最终时间点输出值
+        '''
+        cell = RNN.get_a_cell(num_units= self.__num_units, style= style)
+        #添加在循环网络中加入dropout操作
+        cell = tf.nn.rnn_cell.DropoutWrapper(cell= cell, input_keep_prob= 1.0, output_keep_prob= output_keep_prob)
+        #将原始输入数据变换维度
+        x_in = RNN.reshape(x= self.x, max_time= self.__max_time)
+        outputs, fin_state = tf.nn.dynamic_rnn(cell, x_in, initial_state= cell.zero_state(x_in.get_shape().as_list()[0], tf.float32))
+        return outputs, fin_state
+
+if __name__ == '__main__':
+    rnn = RNN(1, 2, 3, 4, 5, 6)
 
 
 
