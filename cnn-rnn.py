@@ -41,7 +41,7 @@ def onehot(label):
     one_hot = np.zeros(shape= (label.shape[0], 8))
     row = np.arange(label.shape[0])
     column = label
-    one_hot = one_hot[row, column]
+    one_hot[row, column] = 1
     return one_hot
 
 class Databatch:
