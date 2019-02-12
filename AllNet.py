@@ -105,18 +105,17 @@ class CNN(NeuralNetwork):
         '''
         对输入Tensor类型张量进行维度变换
         :param f_vector: type= Tensor, 待处理特征向量
-        :param new_shape: 变换后维度
+        :param new_shape: iterable, 变换后维度
         :return: 处理后的特征向量
         '''
         return tf.reshape(f_vector, new_shape)
 
-    def __init__(self, x, y, w_conv, w_pool, stride_conv, stride_pool, loss, optimizer):
+    def __init__(self, x, y, w_conv, stride_conv, stride_pool, loss, optimizer):
         '''
         卷积神经网络构造函数
         :param x: Tensor, 单一数据特征
         :param y: Tensor, 单一数据标签
-        :param w_conv: type= list, 单个卷积核维度(4维)
-        :param w_pool: type= list, 单个池化核维度(4维)
+        :param w_conv: type= iterable, 单个卷积核维度(4维)
         :param stride_conv: 卷积核移动步伐
         :param stride_pool: 池化核移动步伐
         :param loss: type= Function, 损失函数对象
@@ -124,7 +123,6 @@ class CNN(NeuralNetwork):
         '''
         super(CNN, self).__init__(x, y, loss, optimizer)
         self.__w_conv = w_conv
-        self.__w_pool = w_pool
         self.__stride_conv = stride_conv
         self.__stride_pool = stride_pool
 
@@ -169,8 +167,8 @@ class RNN(NeuralNetwork):
         :param max_time: 最大循环次数
         :return: 维度转换后的特征
         '''
-        den_3 = int(x.get_shape().as_list()[-1] / max_time)
-        para_shape = (x.get_shape().as_list()[0], max_time, den_3)
+        den_3 = x.get_shape().as_list()[-1] // max_time
+        para_shape = (-1, max_time, den_3)
         return tf.reshape(x, para_shape)
 
     def __init__(self, x, y, loss, optimizer, max_time, num_units):
@@ -199,7 +197,7 @@ class RNN(NeuralNetwork):
         cell = tf.nn.rnn_cell.DropoutWrapper(cell= cell, input_keep_prob= 1.0, output_keep_prob= output_keep_prob)
         #将原始输入数据变换维度
         x_in = RNN.reshape(x= self.x, max_time= self.__max_time)
-        outputs, fin_state = tf.nn.dynamic_rnn(cell, x_in, initial_state= cell.zero_state(x_in.get_shape().as_list()[0], tf.float32))
+        outputs, fin_state = tf.nn.dynamic_rnn(cell, x_in, dtype= tf.float32)
         return outputs, fin_state
 
 if __name__ == '__main__':
