@@ -44,9 +44,16 @@ def onehot(label):
     one_hot[row, column] = 1
     return one_hot
 
-class Databatch:
-    ''''''
-    pass
+def Databatch(dataset):
+    '''
+    批数据生成器
+    :param dataset: 训练集数据（带标签）
+    :return: type= (feature, label), 批数据
+    '''
+    data_size = dataset.shape[0]
+    batch_size = 500
+    for i in range(0, data_size-batch_size, 500):
+        yield dataset[i:i+500, :-1], dataset[i:i+500, -1]
 
 def cnn(x):
     '''
