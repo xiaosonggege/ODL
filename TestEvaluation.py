@@ -115,3 +115,7 @@ class Evaluation:
 
         return acc_, PRF_dict
 
+if __name__ == '__main__':
+    pass
+
+

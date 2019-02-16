@@ -104,34 +104,40 @@ def main(dataset_train, dataset_test):
     :param dataset_test: ndarray, shape= (None, 226), 实际测试数据特征
     :return: None
     '''
-    x = tf.placeholder(dtype=tf.float32, shape=(None, 225))
-    y = tf.placeholder(dtype=tf.float32, shape=(None, 8))  # 需要对数据数据进行one-hot编码
-    is_training = tf.placeholder(dtype= tf.bool)
+    # 建立计算图
+    g1 = tf.Graph()
+    with g1.as_default():
+        x = tf.placeholder(dtype=tf.float32, shape=(None, 225))
+        y = tf.placeholder(dtype=tf.float32, shape=(None, 8))  # 需要对数据数据进行one-hot编码
+        is_training = tf.placeholder(dtype=tf.bool)
 
-    #lstm网络输出与类别交互
-    para_size = {
-        'size_in': 192,
-        'size_out': 8
-    }
-    fc_para = {
-        'w1': tf.Variable(tf.truncated_normal(shape= (para_size['size_in'], para_size['size_out']), mean= 0, stddev= 1), dtype= tf.float32),
-        'b1': tf.Variable(tf.truncated_normal(shape= ([para_size['size_out']]), mean= 0, stddev= 1), dtype= tf.float32)
-    }
+        # lstm网络输出与类别交互
+        para_size = {
+            'size_in': 192,
+            'size_out': 8
+        }
+        fc_para = {
+            'w1': tf.Variable(
+                tf.truncated_normal(shape=(para_size['size_in'], para_size['size_out']), mean=0, stddev=1),
+                dtype=tf.float32),
+            'b1': tf.Variable(tf.truncated_normal(shape=([para_size['size_out']]), mean=0, stddev=1), dtype=tf.float32)
+        }
 
-    #cnn-rnn
-    output = cnn(x, is_training)
-    op = lstm(x=output, max_time=8, num_units=192)
-    fc = tf.matmul(op, fc_para['w1']) + fc_para['b1']
-    fc = tf.nn.relu(fc)
+        # cnn-rnn
+        output = cnn(x, is_training)
+        op = lstm(x=output, max_time=8, num_units=192)
+        fc = tf.matmul(op, fc_para['w1']) + fc_para['b1']
+        fc = tf.nn.relu(fc)
 
-    #定义softmax交叉熵和损失函数以及精确度函数
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits= fc, labels= y))
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate= 1e-4).minimize(loss)
-    acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(tf.nn.softmax(fc), 1), tf.argmax(y, 1)), tf.float32))
+        # 定义softmax交叉熵和损失函数以及精确度函数
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=fc, labels=y))
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=1e-4).minimize(loss)
+        acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(tf.nn.softmax(fc), 1), tf.argmax(y, 1)), tf.float32))
 
-    init = tf.global_variables_initializer()
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
-    with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
+        init = tf.global_variables_initializer()
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
+
+    with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph= g1) as sess:
         sess.run(init)
         for epoch in range(100000):
             #制作一个数据的生成器可以像mnist的next_batch函数一样
