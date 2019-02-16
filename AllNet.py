@@ -146,6 +146,39 @@ class CNN(NeuralNetwork):
         return pool_fun(value= input, ksize= [1, self.__stride_pool, self.__stride_pool, 1],
                         strides= [1, self.__stride_pool, self.__stride_pool, 1], padding= 'SAME')
 
+    def batch_normoalization(self, is_training, moving_decay= 0.9, eps= 1e-5):
+        '''
+        批处理层操作
+        :param is_training: type= tf.placeholder, (True/False)指示当前模型是处在训练还是测试时段
+        :param moving_decay: 滑动平均所需的衰减率
+        :param eps: 防止bn操作时出现分母病态条件
+        :return: BN层输出节点
+        '''
+        #获取张量维度元组
+        input_shape = self.x.get_shape().as_list()
+        #BN公式中的期望和方差学习参数
+        beta = tf.Variable(tf.zeros(shape= ([input_shape[-1]])), dtype= tf.float32)
+        gamma = tf.Variable(tf.ones(shape= ([input_shape[-1]])), dtype= tf.float32)
+        axes = list(range(len(input_shape) - 1))
+        #计算各个批次的均值和方差节点
+        batch_mean, batch_var = tf.nn.moments(x= self.x, axes= axes)
+        #滑动平均处理各个批次的均值和方差
+        ema = tf.train.ExponentialMovingAverage(moving_decay)
+
+        def mean_var_with_update():
+            #设置应用滑动平均的张量节点
+            ema_apply_op = ema.apply([batch_mean, batch_var])
+            #明确控制依赖
+            with tf.control_dependencies([ema_apply_op]):
+                return tf.identity(batch_mean), tf.identity(batch_var)
+
+        #训练时，更新均值与方差，测试时使用之前最后一次保存的均值与方差
+        mean, var = tf.cond(tf.equal(is_training, True), mean_var_with_update,
+                            lambda: (ema.average(batch_mean), ema.average(batch_var)))
+        # 最后执行batch normalization
+        return tf.nn.batch_normalization(self.x, mean, var, beta, gamma, eps)
+
+
 class RNN(NeuralNetwork):
 
     @staticmethod

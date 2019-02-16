@@ -39,8 +39,8 @@ def onehot(label):
     :return: 标签数据的one-hot编码形式
     '''
     one_hot = np.zeros(shape= (label.shape[0], 8))
-    row = np.arange(label.shape[0])
-    column = label
+    row = np.arange(label.shape[0], dtype= np.int8)
+    column = label.astype(np.int8)
     one_hot[row, column] = 1
     return one_hot
 
@@ -53,29 +53,33 @@ def Databatch(dataset):
     data_size = dataset.shape[0]
     batch_size = 500
     for i in range(0, data_size-batch_size, 500):
-        yield dataset[i:i+500, :-1], dataset[i:i+500, -1]
+        yield dataset[i:i+500, :225], dataset[i:i+500, -1]
 
-def cnn(x):
+def cnn(x, is_training):
     '''
     :param x: 数据特征占位符
+    :param is_training: 标志训练和测试时段
     搭建cnn模块
     :return: cnn最后一层flat后的节点
     '''
     #1
     cnn_1 = CNN(x= x, y= None, w_conv= (3, 3, 1, 96), stride_conv= 1, stride_pool= 2, loss= None, optimizer= None)
-    x_new = cnn_1.reshape(f_vector= x, new_shape= (-1, 15, 15))
-    conv1 = cnn_1.convolution(op_outside= x_new) + tf.Variable(tf.truncated_normal(shape= (96), mean= 0, stddev= 1), dtype= tf.float32) #-1*15*15*96
+    x_new = cnn_1.reshape(f_vector= x, new_shape= (-1, 15, 15, 1))
+    conv1 = cnn_1.convolution(op_outside= x_new)# + tf.Variable(tf.truncated_normal(shape= ([96]), mean= 0, stddev= 1), dtype= tf.float32) #-1*15*15*96
     relu1 = tf.nn.relu(conv1)
+    bn1 = cnn_1.batch_normoalization(is_training= is_training)
     pool1 = cnn_1.pooling(pool_fun= tf.nn.max_pool, input= relu1) #-1*8*8*96
     #2
     cnn_2 = CNN(x= pool1, y= None, w_conv= (3, 3, 96, 256), stride_conv= 1, stride_pool= 2, loss= None, optimizer= None)
-    conv2 = cnn_2.convolution() + tf.Variable(tf.truncated_normal(shape= (256), mean= 0, stddev= 1), dtype= tf.float32) #-1*8*8*256
+    conv2 = cnn_2.convolution()# + tf.Variable(tf.truncated_normal(shape= ([256]), mean= 0, stddev= 1), dtype= tf.float32) #-1*8*8*256
     relu2 = tf.nn.relu(conv2)
+    bn2 = cnn_2.batch_normoalization(is_training= is_training)
     pool2 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=relu2) #-1*4*4*256
     #3
     cnn_3 = CNN(x=pool2, y=None, w_conv=(3, 3, 256, 384), stride_conv=1, stride_pool=2, loss=None, optimizer=None)
-    conv3 = cnn_3.convolution() + tf.Variable(tf.truncated_normal(shape=(384), mean=0, stddev=1), dtype=tf.float32) #-1*4*4*384
+    conv3 = cnn_3.convolution()# + tf.Variable(tf.truncated_normal(shape=([384]), mean=0, stddev=1), dtype=tf.float32) #-1*4*4*384
     relu3 = tf.nn.relu(conv3)
+    bn3 = cnn_3.batch_normoalization(is_training= is_training)
     pool3 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=relu3) #-1*2*2*384
     x, y, z = pool3.get_shape().as_list()[1:]
     output = tf.reshape(pool3, shape= (-1, x*y*z)) #-1*2*2*384
@@ -93,22 +97,21 @@ def lstm(x, max_time, num_units):
     outputs, _ = rnn.dynamic_rnn(style= 'LSTM', output_keep_prob= 0.8)
     return outputs[:, -1, :]
 
-def main(x_train, y_train, x_test, y_test):
+def main(dataset_train, dataset_test):
     '''
     循环网络后的输出层以及训练过程
-    :param x_train: ndarray, shape= (None, 225), 实际训练数据特征
-    :param y_train: ndarray, shape= (None, 10), 实际训练数据标签
-    :param x_test: ndarray, shape= (None, 225), 实际测试数据特征
-    :param y_test: ndarray, shape= (None, 10), 实际测试数据标签
+    :param dataset_train: ndarray, shape= (None, 226), 实际训练数据特征和标签
+    :param dataset_test: ndarray, shape= (None, 226), 实际测试数据特征
     :return: None
     '''
     x = tf.placeholder(dtype=tf.float32, shape=(None, 225))
     y = tf.placeholder(dtype=tf.float32, shape=(None, 8))  # 需要对数据数据进行one-hot编码
+    is_training = tf.placeholder(dtype= tf.bool)
 
     #lstm网络输出与类别交互
     para_size = {
-        'size_in': 4*4*384,
-        'size_out': 10
+        'size_in': 192,
+        'size_out': 8
     }
     fc_para = {
         'w1': tf.Variable(tf.truncated_normal(shape= (para_size['size_in'], para_size['size_out']), mean= 0, stddev= 1), dtype= tf.float32),
@@ -116,8 +119,8 @@ def main(x_train, y_train, x_test, y_test):
     }
 
     #cnn-rnn
-    output = cnn(x)
-    op = lstm(x=output, max_time=15, num_units=15)
+    output = cnn(x, is_training)
+    op = lstm(x=output, max_time=8, num_units=192)
     fc = tf.matmul(op, fc_para['w1']) + fc_para['b1']
     fc = tf.nn.relu(fc)
 
@@ -130,22 +133,28 @@ def main(x_train, y_train, x_test, y_test):
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
     with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
         sess.run(init)
-        for epoch in range(10000):
+        for epoch in range(100000):
             #制作一个数据的生成器可以像mnist的next_batch函数一样
-            data_batch = Databatch() #待改进
-            for xs, ys in data_batch:
-                _, loss_ = sess.run([optimizer, loss], feed_dict= {x: xs, y: ys})
-            if epoch % 100:
-                acc_ = sess.run(acc, feed_dict= {x: x_test, y: y_test})
+            for xs, ys in Databatch(dataset= dataset_train):
+                #将标签转化成one-hot编码
+                ys = onehot(label= ys)
+                _, loss_ = sess.run([optimizer, loss], feed_dict= {x: xs, y: ys, is_training: True})
+            if not (epoch % 100):
+                x_test = dataset_test[:, :225]
+                y_test = onehot(label= dataset_test[:, -1])
+                acc_ = sess.run(acc, feed_dict= {x: x_test, y: y_test, is_training: False})
                 print('第%s轮训练后测试集上的预测精度为: %s' % (epoch, acc_))
 
 
+if __name__ == '__main__':
+    dataset_train = LoadFile(p= r'F:\ODL\dataset\data_train')
+    dataset_test = LoadFile(p= r'F:\ODL\dataset\data_test')
+    main(dataset_train= dataset_train, dataset_test= dataset_test)
 
 
 
 
 
-# if __name__ == '__main__':
 #     def SaveFile(data, savepickle_p):
 #         '''
 #         存储整理好的数据
