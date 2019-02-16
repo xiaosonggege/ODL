@@ -96,7 +96,7 @@ class Evaluation:
         :param acc: 精确率节点
         :param PRF_dict: 默认为None, PRF表格字典, 字典值为计算图节点元组, shape= (pre_op, recall_op, F1_op),
         如果是回归问题则直接取默认值，如果是分类问题则需要传入PRF字典
-        :return: acc, PRF_dict
+        :return: ndarray类型元组，type= (acc, PRF_dict)
         '''
         #无论之前是否已经建立过计算图，此时都要建立一个专门用于计算性能指标的计算图
         g_eval = tf.Graph()
