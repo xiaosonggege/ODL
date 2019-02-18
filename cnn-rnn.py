@@ -13,8 +13,10 @@ import tensorflow as tf
 import numpy as np
 from sklearn.model_selection import train_test_split
 from AllNet import NeuralNetwork, RNN, CNN, FNN
+from TestEvaluation import Evaluation
 import pandas as pd
 import pickle
+from collections import Counter
 import os
 
 def LoadFile(p):
@@ -39,9 +41,9 @@ def onehot(label):
     :return: 标签数据的one-hot编码形式
     '''
     one_hot = np.zeros(shape= (label.shape[0], 8))
-    row = np.arange(label.shape[0], dtype= np.int8)
     column = label.astype(np.int8)
-    one_hot[row, column] = 1
+    for row in range(label.shape[0]):
+        one_hot[row, column[row]] = 1
     return one_hot
 
 def Databatch(dataset):
@@ -52,8 +54,8 @@ def Databatch(dataset):
     '''
     data_size = dataset.shape[0]
     batch_size = 500
-    for i in range(0, data_size-batch_size, 500):
-        yield dataset[i:i+500, :225], dataset[i:i+500, -1]
+    for i in range(0, data_size-batch_size, batch_size):
+        yield dataset[i:i+batch_size, :225], dataset[i:i+batch_size, -1]
 
 def cnn(x, is_training):
     '''
@@ -63,24 +65,27 @@ def cnn(x, is_training):
     :return: cnn最后一层flat后的节点
     '''
     #1
-    cnn_1 = CNN(x= x, y= None, w_conv= (3, 3, 1, 96), stride_conv= 1, stride_pool= 2, loss= None, optimizer= None)
+    cnn_1 = CNN(x= x, w_conv= (3, 3, 1, 96), stride_conv= 1, stride_pool= 2)
     x_new = cnn_1.reshape(f_vector= x, new_shape= (-1, 15, 15, 1))
     conv1 = cnn_1.convolution(op_outside= x_new)# + tf.Variable(tf.truncated_normal(shape= ([96]), mean= 0, stddev= 1), dtype= tf.float32) #-1*15*15*96
+    # conv11 = cnn_1.convolution(op_outside= conv1)
+    # conv111 = cnn_1.convolution(op_outside= conv11)
     relu1 = tf.nn.relu(conv1)
-    bn1 = cnn_1.batch_normoalization(is_training= is_training)
-    pool1 = cnn_1.pooling(pool_fun= tf.nn.max_pool, input= relu1) #-1*8*8*96
+    bn1 = cnn_1.batch_normoalization(input= relu1, is_training= is_training)
+    pool1 = cnn_1.pooling(pool_fun= tf.nn.max_pool, input= bn1) #-1*8*8*96
     #2
-    cnn_2 = CNN(x= pool1, y= None, w_conv= (3, 3, 96, 256), stride_conv= 1, stride_pool= 2, loss= None, optimizer= None)
+    cnn_2 = CNN(x= pool1, w_conv= (3, 3, 96, 256), stride_conv= 1, stride_pool= 2)
     conv2 = cnn_2.convolution()# + tf.Variable(tf.truncated_normal(shape= ([256]), mean= 0, stddev= 1), dtype= tf.float32) #-1*8*8*256
+    # conv22 = cnn_2.convolution(op_outside= conv2)
     relu2 = tf.nn.relu(conv2)
-    bn2 = cnn_2.batch_normoalization(is_training= is_training)
-    pool2 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=relu2) #-1*4*4*256
+    bn2 = cnn_2.batch_normoalization(input= relu2, is_training= is_training)
+    pool2 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=bn2) #-1*4*4*256
     #3
-    cnn_3 = CNN(x=pool2, y=None, w_conv=(3, 3, 256, 384), stride_conv=1, stride_pool=2, loss=None, optimizer=None)
+    cnn_3 = CNN(x=pool2, w_conv=(3, 3, 256, 384), stride_conv=1, stride_pool=2)
     conv3 = cnn_3.convolution()# + tf.Variable(tf.truncated_normal(shape=([384]), mean=0, stddev=1), dtype=tf.float32) #-1*4*4*384
     relu3 = tf.nn.relu(conv3)
-    bn3 = cnn_3.batch_normoalization(is_training= is_training)
-    pool3 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=relu3) #-1*2*2*384
+    bn3 = cnn_3.batch_normoalization(input= relu3, is_training= is_training)
+    pool3 = cnn_1.pooling(pool_fun=tf.nn.max_pool, input=bn3) #-1*2*2*384
     x, y, z = pool3.get_shape().as_list()[1:]
     output = tf.reshape(pool3, shape= (-1, x*y*z)) #-1*2*2*384
     return output
@@ -93,15 +98,15 @@ def lstm(x, max_time, num_units):
     :param num_units: 隐藏层向量维度\
     :return: lstm最后时刻输出节点，数据标签占位符
     '''
-    rnn = RNN(x= x, y= None, loss= None, optimizer= None, max_time= max_time, num_units= num_units)
+    rnn = RNN(x= x, max_time= max_time, num_units= num_units)
     outputs, _ = rnn.dynamic_rnn(style= 'LSTM', output_keep_prob= 0.8)
     return outputs[:, -1, :]
 
 def main(dataset_train, dataset_test):
     '''
     循环网络后的输出层以及训练过程
-    :param dataset_train: ndarray, shape= (None, 226), 实际训练数据特征和标签
-    :param dataset_test: ndarray, shape= (None, 226), 实际测试数据特征
+    :param dataset_train: ndarray, shape= (None, 239), 实际训练数据特征和标签
+    :param dataset_test: ndarray, shape= (None, 239), 实际测试数据特征
     :return: None
     '''
     # 建立计算图
@@ -132,83 +137,100 @@ def main(dataset_train, dataset_test):
         # 定义softmax交叉熵和损失函数以及精确度函数
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=fc, labels=y))
         optimizer = tf.train.GradientDescentOptimizer(learning_rate=1e-4).minimize(loss)
-        acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(tf.nn.softmax(fc), 1), tf.argmax(y, 1)), tf.float32))
-
+        # acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(tf.nn.softmax(fc), 1), tf.argmax(y, 1)), tf.float32))
+        evaluation = Evaluation(one_hot= True, logit= tf.nn.softmax(fc), label= y, regression_pred= None, regression_label= None)
+        acc = evaluation.acc_classification()
         init = tf.global_variables_initializer()
         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
 
     with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph= g1) as sess:
         sess.run(init)
-        for epoch in range(100000):
+        x_test = dataset_test[:, :225]
+        y_test = onehot(label=dataset_test[:, -1])
+        for epoch in range(10000):
             #制作一个数据的生成器可以像mnist的next_batch函数一样
             for xs, ys in Databatch(dataset= dataset_train):
                 #将标签转化成one-hot编码
                 ys = onehot(label= ys)
                 _, loss_ = sess.run([optimizer, loss], feed_dict= {x: xs, y: ys, is_training: True})
             if not (epoch % 100):
-                x_test = dataset_test[:, :225]
-                y_test = onehot(label= dataset_test[:, -1])
                 acc_ = sess.run(acc, feed_dict= {x: x_test, y: y_test, is_training: False})
                 print('第%s轮训练后测试集上的预测精度为: %s' % (epoch, acc_))
 
+        #定义计算pre, recall, F1参数的结点以便传递到下一个计算图
+        op_logit, op_label = sess.run([tf.nn.softmax(fc), y], feed_dict= {x: x_test, y: y_test, is_training: False})
+        # print(op_label)
+    #定义Evaluation类对象
+    evalulation_2 = Evaluation(one_hot= True, logit= op_logit, label= op_label, regression_pred= None, regression_label= None)
+    PRF_dict_ = evalulation_2.PRF_tables(mode_num= 8)
+    # _, PRF_dict_ = evalulation_2.session_PRF(acc= None, prf_dict= PRF_dict)
+    print(PRF_dict_)
 
 if __name__ == '__main__':
-    dataset_train = LoadFile(p= r'F:\ODL\dataset\data_train')
-    dataset_test = LoadFile(p= r'F:\ODL\dataset\data_test')
+    rng = np.random.RandomState(0)
+    dataset_train = LoadFile(p= r'F:\ODL\dataset\data_train.pickle')
+    dataset_test = LoadFile(p= r'F:\ODL\dataset\data_test.pickle')
+    rng.shuffle(dataset_train)
+    rng.shuffle(dataset_test)
+    # print(dataset_train.shape, dataset_test.shape)
+    # num_train = Counter(dataset_train[:, -1])
+    # num_test = Counter(dataset_test[:, -1])
+    # print(num_train)
+    # print(num_test)
     main(dataset_train= dataset_train, dataset_test= dataset_test)
 
 
 
 
 
-#     def SaveFile(data, savepickle_p):
-#         '''
-#         存储整理好的数据
-#         :param data: 待存储数据
-#         :param savepickle_p: pickle后缀文件存储绝对路径
-#         :return: None
-#         '''
-#         if not os.path.exists(savepickle_p):
-#             with open(savepickle_p, 'wb') as file:
-#                 pickle.dump(data, file)
-#
-#     def LoadFile(p):
-#         '''
-#         读取文件
-#         :param p: 数据集绝对路径
-#         :return: 数据集
-#         '''
-#         data = np.array([0])
-#         try:
-#             with open(p, 'rb') as file:
-#                 data = pickle.load(file)
-#         except:
-#             print('文件不存在!')
-#         finally:
-#             return data
-#
-#     p_1 = r'F:\GraduateDesigning\featrure\original_data_Label1_features.xlsx'
-#     dataset = pd.read_excel(p_1)
-#     data = np.array(dataset)
-#     np.random.shuffle(data)
-#     data = data[:3000, :]
-#     alldata = np.hstack((data, np.ones(shape=(data.shape[0], 1))))
-#     print('alldata维度为:', alldata.shape)
-#     data_train, data_test = data[:2500, :], data[2500:3000, :]
-#     for num in range(2, 9):
-#         p = r'F:\GraduateDesigning\featrure\original_data_Label%s_features.txt' % num
-#         dataset = np.loadtxt(p)
-#         # np.random.shuffle(dataset)
-#         dataset = dataset[:3000, :]
-#         data_fin = np.hstack((dataset, np.ones(shape=(dataset.shape[0], 1)) * num))
-#         print('data_fin的维度为:', data_fin.shape)
-#         data_fin_train, data_fin_test = data[:2500, :], data[2500:3000, :]
-#         data_train = np.vstack((data_train, data_fin_train))
-#         data_test = np.vstack((data_test, data_fin_test))
-#
-#     print('data_train, data_test的维度分别为:', data_train.shape, data_test.shape)
-#
-#     p_train = r'F:\ODL\dataset\data_train'
-#     p_test = r'F:\ODL\dataset\data_test'
-#     SaveFile(data= data_train, savepickle_p= p_train)
-#     SaveFile(data= data_test, savepickle_p= p_t
+    # def SaveFile(data, savepickle_p):
+    #     '''
+    #     存储整理好的数据
+    #     :param data: 待存储数据
+    #     :param savepickle_p: pickle后缀文件存储绝对路径
+    #     :return: None
+    #     '''
+    #     if not os.path.exists(savepickle_p):
+    #         with open(savepickle_p, 'wb') as file:
+    #             pickle.dump(data, file)
+    #
+    # def LoadFile(p):
+    #     '''
+    #     读取文件
+    #     :param p: 数据集绝对路径
+    #     :return: 数据集
+    #     '''
+    #     data = np.array([0])
+    #     try:
+    #         with open(p, 'rb') as file:
+    #             data = pickle.load(file)
+    #     except:
+    #         print('文件不存在!')
+    #     finally:
+    #         return data
+    #
+    # p_1 = r'F:\GraduateDesigning\featrure\original_data_Label1_features.xlsx'
+    # dataset = pd.read_excel(p_1)
+    # data = np.array(dataset)
+    # np.random.shuffle(data)
+    # data = data[:3000, :]
+    # alldata = np.hstack((data, np.ones(shape=(data.shape[0], 1)) * 0))
+    # print('alldata维度为:', alldata.shape)
+    # data_train, data_test = alldata[:2500, :], alldata[2500:3000, :]
+    # for num in range(2, 9):
+    #     p = r'F:\GraduateDesigning\featrure\original_data_Label%s_features.txt' % num
+    #     dataset = np.loadtxt(p)
+    #     # np.random.shuffle(dataset)
+    #     dataset = dataset[:3000, :]
+    #     data_fin = np.hstack((dataset, np.ones(shape=(dataset.shape[0], 1)) * (num - 1)))
+    #     print('data_fin的维度为:', data_fin.shape)
+    #     data_fin_train, data_fin_test = data_fin[:2500, :], data_fin[2500:3000, :]
+    #     data_train = np.vstack((data_train, data_fin_train))
+    #     data_test = np.vstack((data_test, data_fin_test))
+    #
+    # print('data_train, data_test的维度分别为:', data_train.shape, data_test.shape)
+    #
+    # p_train = r'F:\ODL\dataset\data_train.pickle'
+    # p_test = r'F:\ODL\dataset\data_test.pickle'
+    # SaveFile(data= data_train, savepickle_p= p_train)
+    # SaveFile(data= data_test, savepickle_p= p_test)

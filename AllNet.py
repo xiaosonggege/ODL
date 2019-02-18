@@ -26,31 +26,12 @@ class NeuralNetwork:
         all_dim = np.multiply.reduce(np.array(dimension))
         return tf.reshape(tensor, shape=(all_dim,))  # type= Variable
 
-    def __init__(self, x, y, loss, optimizer):
+    def __init__(self, x):
         '''
         神经网络构造函数
         :param x: 单一数据特征
-        :param y: 单一数据标签
-        :param loss: type= Function, 损失函数对象
-        :param optimizer: type= Function, 优化函数对象
         '''
         self.x = x
-        self.y = y
-        self.__loss = loss
-        self.__optimizer = optimizer
-
-    # def AttributePrint(self):
-    #     print('x: %s, y: %s, loss: %s, optimizer: %s' % (self.__x, self.__y, self.__loss, self.__optimizer))
-
-    def loss(self): #待更新
-        ''''''
-        loss = None
-        return loss
-
-    def optimizer(self): #待更新
-        ''''''
-        optimizer = None
-        return optimizer
 
 class FNN(NeuralNetwork):
 
@@ -68,16 +49,13 @@ class FNN(NeuralNetwork):
         h = tf.nn.relu(h)
         return h
 
-    def __init__(self, x, y, loss, optimizer, w):
+    def __init__(self, x, w):
         '''
         全连接网络构造函数
         :param x: Tensor, 单一数据特征
-        :param y: Tensor, 单一数据标签
-        :param loss: type= Function, 损失函数对象
-        :param optimizer: type= Function, 优化函数对象
         :param w: types = ((W, bia),..., ), W, b为参数矩阵和偏置矩阵
         '''
-        super(FNN, self).__init__(x, y, loss, optimizer)
+        super(FNN, self).__init__(x)
         self.__w = w
 
     def fc_concat(self, keep_prob):
@@ -110,18 +88,15 @@ class CNN(NeuralNetwork):
         '''
         return tf.reshape(f_vector, new_shape)
 
-    def __init__(self, x, y, w_conv, stride_conv, stride_pool, loss, optimizer):
+    def __init__(self, x, w_conv, stride_conv, stride_pool):
         '''
         卷积神经网络构造函数
         :param x: Tensor, 单一数据特征
-        :param y: Tensor, 单一数据标签
         :param w_conv: type= iterable, 单个卷积核维度(4维)
         :param stride_conv: 卷积核移动步伐
         :param stride_pool: 池化核移动步伐
-        :param loss: type= Function, 损失函数对象
-        :param optimizer: type= Function, 优化函数对象
         '''
-        super(CNN, self).__init__(x, y, loss, optimizer)
+        super(CNN, self).__init__(x)
         self.__w_conv = w_conv
         self.__stride_conv = stride_conv
         self.__stride_pool = stride_pool
@@ -146,22 +121,23 @@ class CNN(NeuralNetwork):
         return pool_fun(value= input, ksize= [1, self.__stride_pool, self.__stride_pool, 1],
                         strides= [1, self.__stride_pool, self.__stride_pool, 1], padding= 'SAME')
 
-    def batch_normoalization(self, is_training, moving_decay= 0.9, eps= 1e-5):
+    def batch_normoalization(self, input, is_training, moving_decay= 0.9, eps= 1e-5):
         '''
         批处理层操作
+        :param input: Tensor/Variable, 输入张量
         :param is_training: type= tf.placeholder, (True/False)指示当前模型是处在训练还是测试时段
         :param moving_decay: 滑动平均所需的衰减率
         :param eps: 防止bn操作时出现分母病态条件
         :return: BN层输出节点
         '''
         #获取张量维度元组
-        input_shape = self.x.get_shape().as_list()
+        input_shape = input.get_shape().as_list()
         #BN公式中的期望和方差学习参数
         beta = tf.Variable(tf.zeros(shape= ([input_shape[-1]])), dtype= tf.float32)
         gamma = tf.Variable(tf.ones(shape= ([input_shape[-1]])), dtype= tf.float32)
         axes = list(range(len(input_shape) - 1))
         #计算各个批次的均值和方差节点
-        batch_mean, batch_var = tf.nn.moments(x= self.x, axes= axes)
+        batch_mean, batch_var = tf.nn.moments(x= input, axes= axes)
         #滑动平均处理各个批次的均值和方差
         ema = tf.train.ExponentialMovingAverage(moving_decay)
 
@@ -176,7 +152,7 @@ class CNN(NeuralNetwork):
         mean, var = tf.cond(tf.equal(is_training, True), mean_var_with_update,
                             lambda: (ema.average(batch_mean), ema.average(batch_var)))
         # 最后执行batch normalization
-        return tf.nn.batch_normalization(self.x, mean, var, beta, gamma, eps)
+        return tf.nn.batch_normalization(input, mean, var, beta, gamma, eps)
 
 
 class RNN(NeuralNetwork):
@@ -204,17 +180,14 @@ class RNN(NeuralNetwork):
         para_shape = (-1, max_time, den_3)
         return tf.reshape(x, para_shape)
 
-    def __init__(self, x, y, loss, optimizer, max_time, num_units):
+    def __init__(self, x, max_time, num_units):
         '''
         循环网络构造函数
         :param x: Tensor, 单一特征数据
-        :param y: Tensor, 单一数据标签
-        :param loss: 损失函数
-        :param optimizer: 优化函数
         :param max_time: 最大循环次数
         :param num_units: 隐藏层向量维度
         '''
-        super(RNN, self).__init__(x, y, loss, optimizer)
+        super(RNN, self).__init__(x)
         self.__max_time = max_time
         self.__num_units = num_units
 
@@ -234,7 +207,7 @@ class RNN(NeuralNetwork):
         return outputs, fin_state
 
 if __name__ == '__main__':
-    rnn = RNN(1, 2, 3, 4, 5, 6)
+    rnn = RNN(1, 2, 3)
 
 
 

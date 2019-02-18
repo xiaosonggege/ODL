@@ -12,6 +12,7 @@
 
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
+from TestEvaluation import Evaluation
 from numpy import random
 import numpy as np
 from AllNet import RNN
@@ -37,7 +38,9 @@ fc_2 = tf.nn.relu(fc_1) #(batch_size, 1)
 loss = tf.reduce_mean(tf.square(fc_2 - y))
 optimizer = tf.train.AdamOptimizer(1e-4).minimize(loss= loss)
 #回归问题准确率计算
-acc = tf.reduce_mean(tf.cast(tf.abs(fc_2 - y) < 0.2, tf.float32))
+# acc = tf.reduce_mean(tf.cast(tf.abs(fc_2 - y) < 0.2, tf.float32))
+evaluation = Evaluation(one_hot= False, logit= None, label= None, regression_pred= fc_2, regression_label=y)
+acc = evaluation.acc_regression(Threshold= 0.2)
 init = tf.global_variables_initializer()
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
 with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:

@@ -16,7 +16,7 @@ class Evaluation:
 
     def __init__(self, one_hot, logit, label, regression_pred, regression_label):
         '''
-        评估类构造函数
+        评估类构造函数(输入参数均为节点op，如果未使用tensorflow框架，需要先把数据转换为张量节点后方可使用)
         :param logit: dtype= tf.Tensor, shape= (test_label_batch, classifical_num(one_hot)) 预测结果(softmax或sigmoid后的结果)
         :param label: dtype= tf.Tensor, shape= (test_label_batch, classifical_num(one_hot)) 实际标签
         :param regression_pred: dtype= tf.Tensor, shape= (test_label_batch, regression) 预测结果
@@ -62,58 +62,72 @@ class Evaluation:
         :param mode_num: 模式类别数
         :return: PRF表格字典, 字典值为计算图节点元组, shape= (pre_op, recall_op, F1_op)
         '''
-        #初始化PRF字典
-        PRF_dict = {}
-        #非one-hot编码类型
-        if not self.__one_hot:
-            logit_convert, label_convert = self.__logit, self.__label
-        else:
-            logit_convert = tf.argmax(self.__logit, 1)
-            label_convert = tf.argmax(self.__label, 1)
-        for i in range(mode_num):
-            # 模式i的bool预测向量，预测为模式i及为正例，未预测为模式i及为反例
-            each_mode_logit = tf.equal(logit_convert, i)
-            # 模式i的bool标签向量，实际是模式i及为正例，实际不是模式i及为反例
-            each_mode_label = tf.equal(label_convert, i)
-            # 二阶混淆矩阵中的真正例数
-            TP = tf.reduce_sum(tf.cast(tf.equal(each_mode_logit, each_mode_label), tf.float32))
-            # 预测为正例数（模式i）
-            P = tf.reduce_sum(each_mode_logit)
-            # 实际为正例数（模式i）
-            T = tf.reduce_sum(each_mode_label)
-            # 精确率、召回率、F1参数元组
-            pre, recall = TP / P, TP / T
-            f1 = (2 * pre * recall) / (pre + recall)
-            # 评价指标元组shape = (pre, recall, F1_score)
-            eval_tuple = pre, recall, f1
-            PRF_dict[str(i)] = eval_tuple
 
-        return PRF_dict
-
-    def session_calc(self, acc, PRF_dict= None):
-        '''
-        性能指标在计算图中执行相关计算
-        :param acc: 精确率节点
-        :param PRF_dict: 默认为None, PRF表格字典, 字典值为计算图节点元组, shape= (pre_op, recall_op, F1_op),
-        如果是回归问题则直接取默认值，如果是分类问题则需要传入PRF字典
-        :return: ndarray类型元组，type= (acc, PRF_dict)
-        '''
-        #无论之前是否已经建立过计算图，此时都要建立一个专门用于计算性能指标的计算图
+        # 无论之前是否已经建立过计算图，此时都要建立一个专门用于计算性能指标的计算图
         g_eval = tf.Graph()
         with g_eval.as_default():
             init = tf.global_variables_initializer()
             gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
+            # 初始化PRF字典
+            PRF_dict = {}
+            # 非one-hot编码类型
+            if not self.__one_hot:
+                logit_convert, label_convert = self.__logit, self.__label
+            else:
+                logit_convert = tf.argmax(self.__logit, 1)
+                label_convert = tf.argmax(self.__label, 1)
+            for i in range(mode_num):
+                # 模式i的预测向量bool，预测为模式i及为正例，未预测为模式i及为反例
+                each_mode_logit = tf.equal(logit_convert, i)
+                # 模式i的标签向量bool，实际是模式i及为正例，实际不是模式i及为反例
+                each_mode_label = tf.equal(label_convert, i)
+                # 二阶混淆矩阵中的真正例数
+                TP = tf.reduce_sum(tf.cast(each_mode_label & each_mode_logit, tf.float32))
+                #bool转化为float32
+                each_mode_logit = tf.cast(each_mode_logit, tf.float32)
+                each_mode_label = tf.cast(each_mode_label, tf.float32)
+                # 预测为正例数（模式i）
+                P = tf.reduce_sum(each_mode_logit)
+                # 实际为正例数（模式i）
+                T = tf.reduce_sum(each_mode_label)
+
+                # 精确率、召回率、F1参数元组
+                pre, recall = TP / P, TP / T
+                f1 = (2 * pre * recall) / (pre + recall)
+                # 评价指标元组shape = (pre, recall, F1_score)
+                eval_tuple = pre, recall, f1
+                #调试代码
+                # eval_tuple = TP, P, T
+                PRF_dict[str(i)] = eval_tuple
 
         with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph=g_eval) as sess:
             sess.run(init)
-            acc_ = sess.run(acc)
-            #如果是分类问题则需要把PRF字典中所有op都转换成具体值
-            if PRF_dict != None:
-                for i in range(len(PRF_dict.keys())):
-                    pre, recall, f1 = sess.run(list(PRF_dict[str(i)]))
-                    PRF_dict[str(i)] = (pre, recall, f1)
 
-        return acc_, PRF_dict
+            # 如果是分类问题则需要把PRF字典中所有op都转换成具体值
+            for i in range(len(PRF_dict.keys())):
+                pre, recall, f1 = sess.run(list(PRF_dict[str(i)]))
+                PRF_dict[str(i)] = (pre, recall, f1)
+
+        return PRF_dict
+
+    def session_acc(self, acc):
+        '''
+        精确率在计算图中执行相关计算
+        :param acc: 分类回回归问题的精确率计算节点
+        :return: ndarray型数组
+        '''
+        #创建专门计算精确率的计算图
+        g_acc = tf.Graph()
+        with g_acc.as_default():
+            init = tf.global_variables_initializer()
+            gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
+            acc = acc
+        with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph= g_acc) as sess:
+            sess.run(init)
+            acc_ = sess.run(acc)
+
+        return acc_
+
 
 if __name__ == '__main__':
     pass
