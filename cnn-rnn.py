@@ -54,7 +54,7 @@ def Databatch(dataset):
     '''
     data_size = dataset.shape[0]
     batch_size = 500
-    for i in range(0, data_size-batch_size, batch_size):
+    for i in range(0, data_size-batch_size+1, batch_size):
         yield dataset[i:i+batch_size, :225], dataset[i:i+batch_size, -1]
 
 def cnn(x, is_training):
@@ -147,7 +147,7 @@ def main(dataset_train, dataset_test):
         sess.run(init)
         x_test = dataset_test[:, :225]
         y_test = onehot(label=dataset_test[:, -1])
-        for epoch in range(10000):
+        for epoch in range(100000):
             #制作一个数据的生成器可以像mnist的next_batch函数一样
             for xs, ys in Databatch(dataset= dataset_train):
                 #将标签转化成one-hot编码
