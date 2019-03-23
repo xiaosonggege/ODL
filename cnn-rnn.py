@@ -18,21 +18,8 @@ import pandas as pd
 import pickle
 from collections import Counter
 import os
-
-def LoadFile(p):
-    '''
-    读取文件
-    :param p: 数据集绝对路径
-    :return: 数据集
-    '''
-    data = np.array([0])
-    try:
-        with open(p, 'rb') as file:
-            data = pickle.load(file)
-    except:
-        print('文件不存在!')
-    finally:
-        return data
+from sklearn.preprocessing import Imputer
+from Routine_operation import SaveFile, LoadFile, SaveRestore_model, SaveImport_model
 
 def onehot(label):
     '''
@@ -56,6 +43,81 @@ def Databatch(dataset):
     batch_size = 500
     for i in range(0, data_size-batch_size+1, batch_size):
         yield dataset[i:i+batch_size, :225], dataset[i:i+batch_size, -1]
+
+def denoising(dataset, training_time, is_finishing):
+    '''
+    对所有训练和测试数据进行去噪预处理
+    :param dataset: shape:(-1, 225), 原始数据(不包含标签)
+    :param training_time: 标记当前训练次数
+    :param is_finishing: 标记是否已经训练完成
+    :return: None
+    '''
+    LEARNING_RATE = 1e-3
+    g_denoising = tf.Graph()
+    with g_denoising.as_default():
+        with tf.name_scope('placeholder'):
+            x = tf.placeholder(shape=(None, 225), dtype=tf.float32)
+        with tf.name_scope('encoder'):
+            x_input = tf.reshape(tensor=x, shape=(-1, 15, 15, 1))
+            # 输入(-1, 15, 15, 1)
+            conv1 = tf.layers.conv2d(inputs=x_input, filters=32, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
+                                     name='conv1')  # (-1, 15, 15, 32)
+            maxpool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=(2, 2), strides=(2, 2), padding='same',
+                                               name='maxpool1')  # (-1, 8, 8, 32)
+            conv2 = tf.layers.conv2d(inputs=maxpool1, filters=32, kernel_size=(3, 3), padding='same',
+                                     activation=tf.nn.relu, name='conv2')  # (-1, 8, 8, 32)
+            maxpool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=(2, 2), strides=(2, 2), padding='same',
+                                               name='maxpool2')  # (-1, 4, 4, 32)
+            conv3 = tf.layers.conv2d(inputs=maxpool2, filters=16, kernel_size=(3, 3), padding='same',
+                                     activation=tf.nn.relu, name='conv3')  # (-1, 4, 4, 16)
+            encoded = tf.layers.max_pooling2d(inputs=conv3, pool_size=(2, 2), strides=(2, 2), padding='same',
+                                              name='encoded')  # (-1, 2, 2, 16)
+        with tf.name_scope('decoder'):
+            upsample1 = tf.image.resize_nearest_neighbor(images=encoded, size=(4, 4),
+                                                         name='upsample1')  # (-1, 4, 4, 16)
+            conv4 = tf.layers.conv2d(inputs=upsample1, filters=16, kernel_size=(3, 3), padding='same',
+                                     activation=tf.nn.relu, name='conv4')  # (-1, 4, 4, 16)
+            upsample2 = tf.image.resize_nearest_neighbor(images=conv4, size=(8, 8), name='upsample2')  # (-1, 8, 8, 16)
+            conv5 = tf.layers.conv2d(inputs=upsample2, filters=32, kernel_size=(3, 3), padding='same',
+                                     activation=tf.nn.relu, name='conv5')  # (-1, 8, 8, 32)
+            upsample3 = tf.image.resize_nearest_neighbor(images=conv5, size=(15, 15),
+                                                         name='upsample3')  # (-1, 15, 15, 32)
+            conv6 = tf.layers.conv2d(inputs=upsample3, filters=32, kernel_size=(3, 3), padding='same',
+                                     activation=tf.nn.relu, name='conv6')  # (-1, 15, 15, 32)
+            logits = tf.layers.conv2d(inputs=conv6, filters=1, kernel_size=(3, 3), padding='same', activation=None,
+                                      name='logits')  # (-1, 15, 15, 1)
+        with tf.name_scope('loss-op'):
+            # loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=x_input, logits=logits)
+            loss = tf.reduce_mean(tf.square(x_input-logits))
+            cost = tf.reduce_mean(loss)
+            opt = tf.train.AdamOptimizer(LEARNING_RATE).minimize(cost)
+        with tf.name_scope('etc'):
+            init = tf.global_variables_initializer()
+            gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
+            EPOCH = 400
+
+    with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph= g_denoising) as sess:
+        sess.run(init)
+        # 建立checkpoint节点保存对象
+        saverestore_model = SaveRestore_model(sess=sess, save_file_name='denoiseing', max_to_keep=1)
+        saver = saverestore_model.saver_build()
+        if training_time != 0:
+            # 导入checkpoint节点，继续训练
+            saverestore_model.restore_checkpoint(saver=saver)
+        for epoch in range(EPOCH):
+            for xs, _ in Databatch(dataset=dataset):
+                _ = sess.run(opt, feed_dict={x: xs})
+            if not (epoch % 100):
+                cost_ = sess.run(cost, feed_dict={x: dataset})
+                print('第%s轮训练后数据集上的损失值为: %s' % (epoch, cost_))
+            # 保存checkpoint节点
+            saverestore_model.save_checkpoint(saver=saver, epoch=epoch, is_recording_max_acc=False)
+        if is_finishing:
+            x_denoising = sess.run(logits, feed_dict={x: dataset})
+            axis = x_denoising.shape
+            x_denoising = tf.reshape(tensor=x_denoising, shape=(-1, axis[1]*axis[2]*axis[3]))
+            SaveFile(data=x_denoising, savepickle_p=r'F:\ODL\dataset\data_denoising.pickle')
+
 
 def cnn(x, is_training):
     '''
@@ -102,11 +164,12 @@ def lstm(x, max_time, num_units):
     outputs, _ = rnn.dynamic_rnn(style= 'LSTM', output_keep_prob= 0.8)
     return outputs[:, -1, :]
 
-def main(dataset_train, dataset_test):
+def main(dataset_train, dataset_test, train_time):
     '''
     循环网络后的输出层以及训练过程
     :param dataset_train: ndarray, shape= (None, 239), 实际训练数据特征和标签
     :param dataset_test: ndarray, shape= (None, 239), 实际测试数据特征
+    :param train_time: 标记当前训练次数
     :return: None
     '''
     # 建立计算图
@@ -145,6 +208,12 @@ def main(dataset_train, dataset_test):
 
     with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph= g1) as sess:
         sess.run(init)
+        # 建立checkpoint节点保存对象
+        saverestore_model = SaveRestore_model(sess=sess, save_file_name='denoiseing', max_to_keep=1)
+        saver = saverestore_model.saver_build()
+        if train_time != 0:
+            # 导入checkpoint节点，继续训练
+            saverestore_model.restore_checkpoint(saver=saver)
         x_test = dataset_test[:, :225]
         y_test = onehot(label=dataset_test[:, -1])
         for epoch in range(100000):
@@ -152,10 +221,13 @@ def main(dataset_train, dataset_test):
             for xs, ys in Databatch(dataset= dataset_train):
                 #将标签转化成one-hot编码
                 ys = onehot(label= ys)
+                # print(xs.dtype)
                 _, loss_ = sess.run([optimizer, loss], feed_dict= {x: xs, y: ys, is_training: True})
             if not (epoch % 100):
                 acc_ = sess.run(acc, feed_dict= {x: x_test, y: y_test, is_training: False})
                 print('第%s轮训练后测试集上的预测精度为: %s' % (epoch, acc_))
+            # 保存checkpoint节点
+            saverestore_model.save_checkpoint(saver=saver, epoch=epoch, is_recording_max_acc=False)
 
         #定义计算pre, recall, F1参数的结点以便传递到下一个计算图
         op_logit, op_label = sess.run([tf.nn.softmax(fc), y], feed_dict= {x: x_test, y: y_test, is_training: False})
@@ -170,67 +242,30 @@ if __name__ == '__main__':
     rng = np.random.RandomState(0)
     dataset_train = LoadFile(p= r'F:\ODL\dataset\data_train.pickle')
     dataset_test = LoadFile(p= r'F:\ODL\dataset\data_test.pickle')
+    dataset_train = (dataset_train - np.min(dataset_train, axis=0)) / (np.max(dataset_train, axis=0) - np.min(dataset_train, axis=0))
+    dataset_test = (dataset_test - np.min(dataset_test, axis=0)) / (np.max(dataset_test, axis=0) - np.min(dataset_test, axis=0))
+    imp = Imputer(missing_values='NaN', strategy='mean', axis=0, verbose=0, copy=True)
+    dataset_train = imp.fit_transform(dataset_train)
+    dataset_test = imp.fit_transform(dataset_test)
     rng.shuffle(dataset_train)
     rng.shuffle(dataset_test)
+    print(dataset_train.shape, dataset_test.shape)
+    #检查数据
     # print(dataset_train.shape, dataset_test.shape)
     # num_train = Counter(dataset_train[:, -1])
     # num_test = Counter(dataset_test[:, -1])
     # print(num_train)
     # print(num_test)
-    main(dataset_train= dataset_train, dataset_test= dataset_test)
+    #数据预处理去噪
+    dataset = np.vstack((dataset_train, dataset_test))
+    dataset = dataset[:, :225]
+    rng.shuffle(dataset)
+    denoising(dataset, training_time=1, is_finishing=True)
+    #训练数据
+    denoise = LoadFile(p=r'F:\ODL\dataset\data_denoising.pickle')
+    print(denoise.shape, dataset.shape)
+    dataset = np.hstack((denoise, dataset[:, -1][:, np.newaxis]))
+    dataset_train, dataset_test = dataset[:4000, :], dataset[4000:, :]
+    main(dataset_train= dataset_train, dataset_test= dataset_test, train_time=0)
 
 
-
-
-
-    # def SaveFile(data, savepickle_p):
-    #     '''
-    #     存储整理好的数据
-    #     :param data: 待存储数据
-    #     :param savepickle_p: pickle后缀文件存储绝对路径
-    #     :return: None
-    #     '''
-    #     if not os.path.exists(savepickle_p):
-    #         with open(savepickle_p, 'wb') as file:
-    #             pickle.dump(data, file)
-    #
-    # def LoadFile(p):
-    #     '''
-    #     读取文件
-    #     :param p: 数据集绝对路径
-    #     :return: 数据集
-    #     '''
-    #     data = np.array([0])
-    #     try:
-    #         with open(p, 'rb') as file:
-    #             data = pickle.load(file)
-    #     except:
-    #         print('文件不存在!')
-    #     finally:
-    #         return data
-    #
-    # p_1 = r'F:\GraduateDesigning\featrure\original_data_Label1_features.xlsx'
-    # dataset = pd.read_excel(p_1)
-    # data = np.array(dataset)
-    # np.random.shuffle(data)
-    # data = data[:3000, :]
-    # alldata = np.hstack((data, np.ones(shape=(data.shape[0], 1)) * 0))
-    # print('alldata维度为:', alldata.shape)
-    # data_train, data_test = alldata[:2500, :], alldata[2500:3000, :]
-    # for num in range(2, 9):
-    #     p = r'F:\GraduateDesigning\featrure\original_data_Label%s_features.txt' % num
-    #     dataset = np.loadtxt(p)
-    #     # np.random.shuffle(dataset)
-    #     dataset = dataset[:3000, :]
-    #     data_fin = np.hstack((dataset, np.ones(shape=(dataset.shape[0], 1)) * (num - 1)))
-    #     print('data_fin的维度为:', data_fin.shape)
-    #     data_fin_train, data_fin_test = data_fin[:2500, :], data_fin[2500:3000, :]
-    #     data_train = np.vstack((data_train, data_fin_train))
-    #     data_test = np.vstack((data_test, data_fin_test))
-    #
-    # print('data_train, data_test的维度分别为:', data_train.shape, data_test.shape)
-    #
-    # p_train = r'F:\ODL\dataset\data_train.pickle'
-    # p_test = r'F:\ODL\dataset\data_test.pickle'
-    # SaveFile(data= data_train, savepickle_p= p_train)
-    # SaveFile(data= data_test, savepickle_p= p_test)
